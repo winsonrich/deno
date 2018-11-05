@@ -125,3 +125,9 @@ export function deferred(): Deferred {
     reject: reject!
   };
 }
+
+// Returns whether o is an object, not null, and not a function.
+// @internal
+export function isObject(o: unknown): o is object {
+  return o != null && typeof o === "object";
+}

@@ -6,6 +6,7 @@ import "../website/app_test.js";
 import "./blob_test.ts";
 import "./buffer_test.ts";
 import "./chmod_test.ts";
+import "./command_test.ts";
 import "./compiler_test.ts";
 import "./console_test.ts";
 import "./copy_file_test.ts";

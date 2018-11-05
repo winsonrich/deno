@@ -25,10 +25,13 @@ use resources::table_entries;
 use std;
 use std::fs;
 use std::net::{Shutdown, SocketAddr};
-#[cfg(any(unix))]
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Command;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
@@ -36,6 +39,7 @@ use std::time::{Duration, Instant};
 use tokio;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
+use tokio_process::CommandExt;
 use tokio_threadpool;
 
 type OpResult = DenoResult<Buf>;
@@ -100,6 +104,7 @@ pub fn dispatch(
       msg::Any::ReplReadline => op_repl_readline,
       msg::Any::ReplStart => op_repl_start,
       msg::Any::Resources => op_resources,
+      msg::Any::Run => op_run,
       msg::Any::SetEnv => op_set_env,
       msg::Any::Shutdown => op_shutdown,
       msg::Any::Start => op_start,
@@ -1375,4 +1380,78 @@ fn op_resources(
       ..Default::default()
     },
   ))
+}
+
+fn op_run(
+  state: &Arc<IsolateState>,
+  base: &msg::Base,
+  data: &'static mut [u8],
+) -> Box<Op> {
+  let cmd_id = base.cmd_id();
+
+  // TODO: add a separate permission for child processes.
+  if let Err(e) = state.check_write("/") {
+    return odd_future(e);
+  }
+
+  assert_eq!(data.len(), 0);
+  let inner = base.inner_as_run().unwrap();
+  let argv = inner.argv().unwrap();
+  let dir = inner.dir();
+
+  let mut cmd = Command::new(argv.get(0));
+  (1..argv.len()).for_each(|i| {
+    let arg = argv.get(i);
+    cmd.arg(arg);
+  });
+  dir.map(|d| cmd.current_dir(d));
+
+  // TODO: add stdio etc.
+
+  let future = match cmd.status_async() {
+    Ok(v) => v,
+    Err(err) => {
+      return odd_future(err.into());
+    }
+  };
+  let future = future.map_err(DenoError::from).and_then(move |status| {
+    // TODO: rather than returning a future, make the process a resource so it
+    // can be interacted with (killed, piped into, etc.) before it exits.
+    let code = status.code();
+
+    #[cfg(unix)]
+    let signal = status.signal();
+    #[cfg(not(unix))]
+    let signal = None;
+
+    code
+      .or(signal)
+      .expect("Should have either an exit code or a signal.");
+    let status = if code.is_some() {
+      msg::ExitStatus::ExitedWithCode
+    } else {
+      msg::ExitStatus::ExitedWithSignal
+    };
+
+    let builder = &mut FlatBufferBuilder::new();
+    let inner = msg::RunRes::create(
+      builder,
+      &msg::RunResArgs {
+        status,
+        exit_code: code.unwrap_or(-1),
+        exit_signal: signal.unwrap_or(-1),
+        ..Default::default()
+      },
+    );
+    ok_future(serialize_response(
+      cmd_id,
+      builder,
+      msg::BaseArgs {
+        inner: Some(inner.as_union_value()),
+        inner_type: msg::Any::RunRes,
+        ..Default::default()
+      },
+    ))
+  });
+  Box::new(future)
 }

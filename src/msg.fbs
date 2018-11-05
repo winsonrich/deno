@@ -53,6 +53,8 @@ union Any {
   CwdRes,
   Metrics,
   MetricsRes,
+  Run,
+  RunRes
 }
 
 enum ErrorKind: byte {
@@ -78,8 +80,8 @@ enum ErrorKind: byte {
   WriteZero,
   Other,
   UnexpectedEof,
-
   BadResource,
+  CommandFailed,
 
   // url errors
 
@@ -403,6 +405,23 @@ table MetricsRes {
   bytes_sent_control: uint64;
   bytes_sent_data: uint64;
   bytes_received: uint64;
+}
+
+// TODO: a process should be a resource.
+table Run {
+  argv: [string];
+  dir: string;
+}
+
+enum ExitStatus: byte {
+  ExitedWithCode,
+  ExitedWithSignal
+}
+
+table RunRes {
+  status: ExitStatus;
+  exit_code: int;
+  exit_signal: int;
 }
 
 root_type Base;
